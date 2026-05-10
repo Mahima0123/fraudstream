@@ -2,7 +2,26 @@ from kafka import KafkaConsumer
 import json
 from collections import defaultdict, deque
 from datetime import datetime, timedelta
+import json
+import logging
 
+# logging setup
+logging.basicConfig(level=logging.INFO)
+
+# store last known info
+user_last_location = {}
+user_last_device = {}
+
+# store transactions per user
+user_transactions = defaultdict(list)
+
+# thresholds
+HIGH_AMOUNT = 1500
+TIME_WINDOW = timedelta(minutes=1)
+MAX_TXN_COUNT = 5
+SPENDING_SPIKE = 3000
+
+# Kafka consumer
 consumer = KafkaConsumer(
     "transactions",
     bootstrap_servers='localhost:9092',
@@ -11,20 +30,20 @@ consumer = KafkaConsumer(
     value_deserializer=lambda x: json.loads(x.decode('utf-8'))
 )
 
-print("Consumer initialized...")
+logging.info("Fraud Detection Consumer initialized...")
 
-# store recent transactions per user
-user_transactions = defaultdict(list)
+# save alerts to file
+def save_alert(alert):
+    with open("data/fraud_alerts.json", "a") as f:
+        f.write(json.dumps(alert) + "\n")
 
-# thresholds
-HIGH_AMOUNT = 1500
-TIME_WINDOW = timedelta(minutes=1)
-MAX_TXN_COUNT = 5
-
+# Process messages
 for message in consumer:
     event = message.value
     user = event['user_id']
     amount = event['amount']
+    country = event['country']
+    device = event['device_id']
     timestamp = datetime.fromisoformat(event['timestamp'])
 
     # store transaction
@@ -38,8 +57,51 @@ for message in consumer:
 
     # 1. Hight value transaction
     if amount > HIGH_AMOUNT:
-        print(f"ALERT: High value transaction detected for {event}")
+        alert = {
+            "alert_type": "HIGH_VALUE_TRANSACTION",
+            "event": event
+        }
+        logging.warning(f"High-value transaction detected: {event}")
+        save_alert(alert)
     
     # 2. Too many transactions in short time
     if len(user_transactions[user]) > MAX_TXN_COUNT:
-        print(f"ALERT: Too many transactions detected for user {event}")
+        alert = {
+            "alert_type": "VELOCITY_FRAUD",
+            "event": event,
+        }
+        logging.warning(f"Too many transactions detected: {event}")
+        save_alert(alert)
+
+    # 3. Impossible travel
+    if user in user_last_location:
+        if user_last_location[user] != country:
+            alert = {
+                "alert_type": "LOCATION_CHANGE",
+                "event": event
+            }
+            logging.warning(f"Location change detected: {event}")
+            save_alert(alert)
+    user_last_location[user] = country
+
+    # 4. Device change
+    if user in user_last_device:
+        if user_last_device[user] != device:
+            alert = {
+                "alert_type": "DEVICE_CHANGE",
+                "event": event
+            }
+
+            logging.warning(f"Device change detected: {event}")
+            save_alert(alert)
+    user_last_device[user] = device
+
+    # 5. Spending spike
+    total_amount = sum(txn[1] for txn in user_transactions[user])
+    if total_amount > SPENDING_SPIKE:
+        alert = {
+            "alert_type": "SPENDING_SPIKE",
+            "event": event
+        }
+        logging.warning(f"Spending spike detected: {event}")
+        save_alert(alert)
