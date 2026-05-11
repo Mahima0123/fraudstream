@@ -2,3 +2,4 @@ kafka-python
 pandas
 faker
 python-dotenv
+psycopg2-binary

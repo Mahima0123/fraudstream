@@ -4,6 +4,7 @@ from collections import defaultdict, deque
 from datetime import datetime, timedelta
 import json
 import logging
+from utils.db import get_connection
 
 # logging setup
 logging.basicConfig(level=logging.INFO)
@@ -34,8 +35,19 @@ logging.info("Fraud Detection Consumer initialized...")
 
 # save alerts to file
 def save_alert(alert):
-    with open("data/fraud_alerts.json", "a") as f:
-        f.write(json.dumps(alert) + "\n")
+    # with open("data/fraud_alerts.json", "a") as f:
+    #     f.write(json.dumps(alert) + "\n")
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute(
+        "INSERT INTO fraud_alerts (alert_type, event) VALUES (%s, %s)",
+        (alert['alert_type'], json.dumps(alert['event']))
+    )
+
+    conn.commit()
+    cur.close()
+    conn.close()
 
 # Process messages
 for message in consumer:
